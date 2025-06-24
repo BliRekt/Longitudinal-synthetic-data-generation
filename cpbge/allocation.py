@@ -1,5 +1,4 @@
 import numpy as np
-import math
 
 class Allocation:
     def __init__(self, num_nodes, max_segments=10):
@@ -49,15 +48,30 @@ class Allocation:
             new_allocation[node, new_change_point:] = current_val + 1
             new_K[node] = new_K_node
             
-            # Priors and proposal ratios (for Metropolis-Hastings acceptance)
-            λ = 1.0
-            prior_ratio = (math.exp(-λ) / math.factorial(new_K_node - 1)) / \
-            (math.exp(-λ) / math.factorial(current_K_node - 1))
+            # Determine where new_change_point sits
+            b_j = new_change_point
+            b_jm1 = new_change_point - 1
+            b_jp1 = current_allocation.shape[1]
+            for t in range(new_change_point + 1, current_allocation.shape[1]):
+                if current_allocation[node, t] > current_val:
+                    b_jp1 = t
+                    break
 
-            # Proposal ratio (birth vs death)
+            numerator = (b_jp1 - b_j) * (b_j - b_jm1)
+            denominator = (b_jp1 - b_jm1)
+
+            if denominator == 0:
+                return current_allocation, current_K, 1.0  # Prevent division by zero
+
+            # Prior ratio (encourages evenly spaced changepoints)
+            prior_ratio = (2 * current_K_node * (2 * current_K_node + 1)) / ((current_allocation.shape[1] - 2) ** 2)
+            prior_ratio *= numerator / denominator
+
+            # Proposal ratio
             forward_prob = 0.45 / len(possible_positions)
             backward_prob = 0.45 / new_K_node
             proposal_ratio = forward_prob / backward_prob if backward_prob > 0 else 1.0
+
             
             return new_allocation, new_K, prior_ratio * proposal_ratio
             
@@ -78,14 +92,24 @@ class Allocation:
             # Select a change-point to remove
             cp_to_remove = np.random.choice(change_points)
             current_val = current_allocation[node, cp_to_remove]
-            
+
+            b_j = cp_to_remove
+            b_jm1 = max([t for t in change_points if t < b_j], default=0)
+            b_jp1 = min([t for t in change_points if t > b_j], default=current_allocation.shape[1])
+
+            numerator = (b_jp1 - b_j)
+            denominator = (b_jp1 - b_j) * (b_j - b_jm1)
+
+            if denominator == 0:
+                return current_allocation, current_K, 1.0  # Prevent div-by-zero
+
+            prior_ratio = (current_allocation.shape[1] - 2) / (2 * (2 * new_K[node] + 1))
+            prior_ratio *= numerator / denominator
+
             # Update allocation by removing the change-point
             mask = new_allocation[node, :] > current_val
             new_allocation[node, mask] -= 1
             new_K[node] = current_K_node - 1
-            
-            # Compute prior ratio (Poisson prior on number of change-points)
-            prior_ratio = new_K[node] * math.exp(0)
             
             # Proposal ratio (death vs birth)
             forward_prob = 0.45 / len(change_points)
@@ -139,7 +163,20 @@ class Allocation:
             # Normalize segment labels to ensure they’re 0 to K-1
             _, new_allocation[node, :] = np.unique(temp_allocation[node, :], return_inverse=True)
             
-            prior_ratio = 1.0
+            # Identify the old and new changepoint positions
+            b_j = cp_to_move
+            b_j_star = new_cp
+            b_jm1 = prev_cp
+            b_jp1 = next_cp
+
+            numerator = (b_jp1 - b_j_star) * (b_j_star - b_jm1)
+            denominator = (b_jp1 - b_j) * (b_j - b_jm1)
+
+            if denominator == 0:
+                return current_allocation, current_K, 1.0  # Avoid div-by-zero
+
+            prior_ratio = numerator / denominator
             proposal_ratio = 1.0
+
             
             return new_allocation, new_K, prior_ratio * proposal_ratio
